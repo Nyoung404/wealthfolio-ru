@@ -1,0 +1,102 @@
+name: Build Windows Installer (RU)
+
+# Сборка русифицированного установщика Wealthfolio для Windows.
+# Работает в вашем форке без каких-либо секретов: подпись и автообновления отключены.
+#
+# Как пользоваться:
+#   1. Сделайте форк https://github.com/wealthfolio/wealthfolio
+#   2. Положите этот файл в .github/workflows/ вашего форка (ветка main)
+#   3. Положите wealthfolio-ru-3.11.0.patch в корень форка (или оставьте ru-патч внутри ветки)
+#   4. Actions -> "Build Windows Installer (RU)" -> Run workflow
+#   5. Скачайте артефакт "wealthfolio-ru-<target>-nsis" со страницы запуска
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Тег или ветка исходников (должна соответствовать патчу)"
+        type: string
+        default: v3.11.0
+      target:
+        description: "Архитектура Windows"
+        type: choice
+        default: x86_64-pc-windows-msvc
+        options:
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      TARGET: ${{ inputs.target }}
+    steps:
+      - name: Checkout patch (this repo)
+        uses: actions/checkout@v4
+        with:
+          path: ru-kit
+
+      - name: Checkout Wealthfolio sources
+        uses: actions/checkout@v4
+        with:
+          repository: wealthfolio/wealthfolio
+          ref: ${{ inputs.ref }}
+          path: src
+
+      - name: Apply Russian localization patch
+        shell: bash
+        working-directory: src
+        run: git apply --whitespace=nowarn ../ru-kit/wealthfolio-ru-3.11.0.patch
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust target
+        run: rustup target add ${{ env.TARGET }}
+
+      - name: pnpm Setup
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: src/package.json
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src -> target
+          shared-key: ru-${{ env.TARGET }}
+
+      - name: Node setup
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: src/.node-version
+          cache: pnpm
+          cache-dependency-path: src/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: src
+        run: pnpm install --frozen-lockfile
+
+      - name: Check translations
+        working-directory: src
+        run: node apps/frontend/scripts/check-translations.mjs
+
+      - name: Disable updater artifacts (no signing key in a fork)
+        shell: bash
+        run: echo '{"bundle":{"createUpdaterArtifacts":false}}' > "$RUNNER_TEMP/ru-build.json"
+
+      - name: Build installer
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: src
+          tauriScript: pnpm tauri
+          args: --target ${{ env.TARGET }} --bundles nsis --config ${{ runner.temp }}\ru-build.json -- --locked
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: wealthfolio-ru-${{ env.TARGET }}-nsis
+          path: src/target/${{ env.TARGET }}/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 30
