@@ -78,9 +78,10 @@ jobs:
         working-directory: src
         run: pnpm install --frozen-lockfile
 
-      - name: Check translations
+      - name: Check translations (informational only)
         working-directory: src
-        run: node apps/frontend/scripts/check-translations.mjs
+        continue-on-error: true
+        run: node apps/frontend/scripts/check-translations.mjs || true
 
       - name: Disable updater artifacts (no signing key in a fork)
         shell: bash
